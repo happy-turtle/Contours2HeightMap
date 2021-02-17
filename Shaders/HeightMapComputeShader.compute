@@ -1,0 +1,71 @@
+﻿// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel CSMain
+
+RWTexture2D<float> Result;
+StructuredBuffer<float2> polygonOutline;
+StructuredBuffer<uint> polygonIndices;
+float curviness;
+
+inline float IfLessThan(float x, float y)
+{
+    return max(sign(y - x), 0.0);
+}
+
+inline float IfGreaterOrEqual(float x, float y)
+{
+    return 1 - IfLessThan(x, y);
+}
+
+inline uint IfNotEqual(uint x, uint y)
+{
+    return abs(sign(x - y));
+}
+
+inline uint IfEqual(uint x, uint y)
+{
+    return 1 - IfNotEqual(x, y);
+}
+
+float DistancePointToLine(float2 pnt, float2 lineStart, float2 lineEnd)
+{
+    float2 lineSegment = lineEnd - lineStart;
+    float2 pointVector = pnt - lineStart;
+    float2 pointVectorScaled = pointVector * (rcp(length(lineSegment)));
+    float2 lineUnitSegment = normalize(lineSegment);
+    float t = clamp(dot(lineUnitSegment, pointVectorScaled), 0.0, 1.0);
+    float2 nearestPoint = lineSegment * t;
+    float dist = distance(pointVector, nearestPoint);
+    return dist;
+}
+
+[numthreads(32,32,1)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+    float texWidth, texHeight;
+    Result.GetDimensions(texWidth, texHeight);
+    uint numPolygons, stride;
+    polygonIndices.GetDimensions(numPolygons, stride);
+    
+    float pntDistance;
+    float smallestDistance = 1.0;
+    uint j;
+    float2 pnt = float2(id.x / texWidth, id.y / texHeight);
+    uint start = 0;
+    
+    for (uint k = 0; k < numPolygons; k++)
+    {
+        uint end = start + (uint) polygonIndices[k];
+        for (uint i = start; i < end; i++)
+        {
+            //for the last point, we want to draw the line to the first point with index 0
+            j = IfNotEqual(i, end - 1) * (i + 1) + IfEqual(i, end - 1) * start;
+            float2 outline0 = float2(polygonOutline[i].x, polygonOutline[i].y);
+            float2 outline1 = float2(polygonOutline[j].x, polygonOutline[j].y);
+            pntDistance = DistancePointToLine(pnt, outline0, outline1);
+            smallestDistance = pntDistance * IfLessThan(pntDistance, smallestDistance) + smallestDistance * IfGreaterOrEqual(pntDistance, smallestDistance);
+        }
+        start += (uint) polygonIndices[k];
+    }
+
+    Result[id.xy] = 1.0 - rcp(1.0 + smallestDistance * curviness);
+}
